@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bangumi.tv Friend Ratings Leaderboard
 // @namespace    https://github.com/Adachi-Git
-// @version      0.1
+// @version      0.2
 // @description  Friend Ratings Leaderboard
 // @author       Adachi
 // @match        https://bangumi.tv/user/*/friends
@@ -10,8 +10,10 @@
 // @license MIT
 // @grant        none
 // ==/UserScript==
+
 (function() {
     'use strict';
+
     // 首次运行时创建 IndexedDB 数据库和对象存储区
     function initializeIndexedDB() {
         // 打开或创建名为 'friendRatingsDB' 的数据库
@@ -40,7 +42,6 @@
     // 首次运行时初始化 IndexedDB
     initializeIndexedDB();
 
-
     const batchSize = 1000; // 每次存入的批量大小
 
     // 提取好友 ID 的函数
@@ -58,7 +59,7 @@
     }
 
     // 发送请求获取好友的收藏数据
-    async function bangumiAPIFetch(userID, limit, offset) {
+    async function bangumiAPIFetch(userID, limit, offset, subjectType) {
         const base_url = "https://api.bgm.tv/v0/users";
         const collections_endpoint = `${base_url}/${userID}/collections`;
 
@@ -68,7 +69,7 @@
         };
 
         const params = {
-            'subject_type': 2,  // Anime
+            'subject_type': subjectType,
             'limit': limit,
             'offset': offset
         };
@@ -134,13 +135,7 @@
     }
 
     // 获取所有好友的收藏数据
-    async function fetchFriendCollections() {
-        // 弹出二次确认窗口
-        const confirmed = confirm('您确定要获取友评排行榜吗？');
-        if (!confirmed) {
-            return; // 用户取消操作，直接返回
-        }
-
+    async function fetchFriendCollections(subjectType) {
         // 获取好友 ID
         const friendIDs = extractFriendIDsFromHTML();
         const limit = 50; // 每页条目数量
@@ -152,7 +147,7 @@
             try {
                 while (true) {
                     // 发送请求获取好友的收藏数据
-                    const collections = await bangumiAPIFetch(friendID, limit, offset);
+                    const collections = await bangumiAPIFetch(friendID, limit, offset, subjectType);
                     totalFetched += collections.length;
 
                     // 如果获取到的数据为空，则说明已经没有更多数据了
@@ -186,6 +181,79 @@
         alert('所有好友的收藏数据已成功获取！');
     });
 
+    // 获取用户输入的主题类型
+    function getUserSubjectType() {
+        let subjectType;
+        do {
+            subjectType = prompt('请输入要获取的主题类型：\n1 - 书籍\n2 - 动画\n3 - 音乐\n4 - 游戏\n6 - 三次元');
+            subjectType = parseInt(subjectType);
+        } while (![1, 2, 3, 4, 6].includes(subjectType));
+        return subjectType;
+    }
+
+    // 创建按钮元素
+    const button = document.createElement('a');
+
+    // 设置按钮的类名、链接和标题
+    button.className = 'chiiBtn';
+    button.href = 'javascript:void(0)';
+    button.textContent = '获取友评排行榜';
+
+    // 按钮点击事件
+    button.onclick = function() {
+        const subjectType = getUserSubjectType();
+        fetchFriendCollections(subjectType);
+    };
+
+    // 找到要添加按钮的元素
+    const nameElement = document.querySelector('.name');
+
+    // 将按钮添加到该元素的右侧
+    nameElement.parentNode.insertBefore(button, nameElement.nextSibling);
+
+    // 创建用于显示排序后条目的容器
+    const container = document.createElement('div');
+    container.id = 'sortedEntries';
+    container.style.cssText = 'position: fixed; top: 50%; right: 10px; transform: translateY(-50%); width: 300px; height: 300px; background-color: #f0f0f0; padding: 10px; overflow-y: auto;';
+    document.body.appendChild(container);
+
+    // 创建用于显示筛选人数输入框的容器
+    const filterContainer = document.createElement('div');
+    filterContainer.style.cssText = 'position: fixed; top: 10%; right: 10px;';
+
+    // 创建筛选人数输入框
+    const filterInput = document.createElement('input');
+    filterInput.type = 'number';
+    filterInput.placeholder = '输入评分人数';
+    filterInput.addEventListener('input', filterEntries);
+
+    // 将输入框添加到筛选容器中
+    filterContainer.appendChild(filterInput);
+
+    // 将筛选容器添加到页面中
+    document.body.appendChild(filterContainer);
+
+    // 筛选函数
+    function filterEntries() {
+        const filterValue = parseInt(filterInput.value); // 获取输入的评分人数
+        const sortedEntries = document.querySelectorAll('#sortedEntries > div'); // 获取所有条目
+        let index = 0; // 初始化新的序号
+
+        // 遍历所有条目，根据评分人数筛选显示
+        sortedEntries.forEach(entry => {
+            const numRates = parseInt(entry.textContent.match(/评分人数: (\d+)/)[1]); // 从文本中提取评分人数
+            if (isNaN(filterValue) || numRates >= filterValue) { // 如果评分人数大于等于筛选值，则显示条目
+                entry.style.display = 'block';
+                // 更新条目的序号
+                entry.firstChild.textContent = `${++index} - `;
+            } else { // 否则隐藏条目
+                entry.style.display = 'none';
+            }
+        });
+    }
+
+    // 页面加载时检查IndexedDB中的数据并排序显示
+    displaySortedEntries();
 
     // 检查IndexedDB中的数据并排序显示
     function displaySortedEntries() {
@@ -237,87 +305,30 @@
         return sortedEntries;
     }
 
-
-    // 在右侧框中渲染排序后的条目
     function renderSortedEntries(sortedEntries) {
         const container = document.getElementById('sortedEntries');
         container.innerHTML = '';
+        const currentDomain = window.location.hostname; // 获取当前页面的域名
+
         sortedEntries.forEach((entry, index) => {
             const div = document.createElement('div');
+
+            // 设置文字颜色
+            div.style.color = '#F09199';
             const subjectLink = document.createElement('a');
-            subjectLink.href = `https://bangumi.tv/subject/${entry.subjectId}`;
+            subjectLink.href = `https://${currentDomain}/subject/${entry.subjectId}`; // 使用当前域名构造链接
             subjectLink.textContent = entry.subjectName;
             subjectLink.target = '_blank'; // 在新标签页打开链接
-            // 设置字体颜色为浅蓝色
+            // 设置超链接字体颜色
             subjectLink.style.color = '#1e90ff'; // 道奇蓝
             div.appendChild(document.createTextNode(`${index + 1} - `));
             div.appendChild(subjectLink);
             div.appendChild(document.createTextNode(` - 平均评分: ${entry.averageRate.toFixed(2)} - 评分人数: ${entry.numRates}`));
+
+            // 设置字体大小为14px
+            div.style.fontSize = '14px';
+
             container.appendChild(div);
         });
     }
-
-
-
-    // 创建按钮元素
-    const button = document.createElement('a');
-
-    // 设置按钮的类名、链接和标题
-    button.className = 'chiiBtn';
-    button.href = 'javascript:void(0)';
-    button.textContent = '获取友评排行榜';
-
-    // 按钮点击事件
-    button.onclick = fetchFriendCollections;
-
-    // 找到要添加按钮的元素
-    const nameElement = document.querySelector('.name');
-
-    // 将按钮添加到该元素的右侧
-    nameElement.parentNode.insertBefore(button, nameElement.nextSibling);
-
-    // 创建用于显示排序后条目的容器
-    const container = document.createElement('div');
-    container.id = 'sortedEntries';
-    container.style.cssText = 'position: fixed; top: 50%; right: 10px; transform: translateY(-50%); width: 300px; height: 300px; background-color: #f0f0f0; padding: 10px; overflow-y: auto;';
-    document.body.appendChild(container);
-
-    // 创建用于显示筛选人数输入框的容器
-    const filterContainer = document.createElement('div');
-    filterContainer.style.cssText = 'position: fixed; top: 10%; right: 10px;';
-
-    // 创建筛选人数输入框
-    const filterInput = document.createElement('input');
-    filterInput.type = 'number';
-    filterInput.placeholder = '输入评分人数';
-    filterInput.addEventListener('input', filterEntries);
-
-    // 将输入框添加到筛选容器中
-    filterContainer.appendChild(filterInput);
-
-    // 将筛选容器添加到页面中
-    document.body.appendChild(filterContainer);
-
-    // 筛选函数
-    function filterEntries() {
-        const filterValue = parseInt(filterInput.value); // 获取输入的评分人数
-        const sortedEntries = document.querySelectorAll('#sortedEntries > div'); // 获取所有条目
-        let index = 0; // 初始化新的序号
-
-        // 遍历所有条目，根据评分人数筛选显示
-        sortedEntries.forEach(entry => {
-            const numRates = parseInt(entry.textContent.match(/评分人数: (\d+)/)[1]); // 从文本中提取评分人数
-            if (isNaN(filterValue) || numRates >= filterValue) { // 如果评分人数大于等于筛选值，则显示条目
-                entry.style.display = 'block';
-                // 更新条目的序号
-                entry.firstChild.textContent = `${++index} - `;
-            } else { // 否则隐藏条目
-                entry.style.display = 'none';
-            }
-        });
-    }
-
-
-    // 页面加载时检查IndexedDB中的数据并排序显示
-    displaySortedEntries();
 })();
